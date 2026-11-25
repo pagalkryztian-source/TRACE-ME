@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRACE://ME</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;background:#000;color:#fff}
+  body{
+    font-family:'Press Start 2P',Consolas,"Courier New",monospace;
+    font-size:26px;line-height:1.7;
+    -webkit-font-smoothing:none;font-smooth:never;text-rendering:optimizeSpeed;
+    display:flex;overflow-x:hidden;overflow-y:auto;
+    padding:clamp(18px,5vw,56px);
+    text-transform:uppercase;
+  }
+  body.pulse{background:#fff;color:#000}
+
+  /* ---- Terminal ---- */
+  #term{width:100%;max-width:1100px;margin:auto;text-align:left;transition:opacity .2s ease}
+  #term.fade{opacity:0}
+  #term.center{text-align:center}
+  .line{white-space:pre-wrap;overflow-wrap:anywhere;margin-bottom:.6em}
+  .line.big{font-size:1.8em;line-height:1.35}
+  .line.huge{font-size:2.6em;line-height:1.25}
+  .cursor{display:inline-block;width:.55em;height:1em;background:currentColor;vertical-align:text-bottom;
+          margin-left:4px;animation:blink .8s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+
+  /* ---- Data table ---- */
+  .rows{margin-top:.4em}
+  .row{display:grid;grid-template-columns:minmax(7em,11em) 1fr;column-gap:1.4em;
+       padding:.7em 0;border-bottom:2px dashed #3a3a3a;font-size:.85em;line-height:1.5}
+  .row .k{color:#8a8a8a;overflow-wrap:anywhere}
+  .row .v{color:#fff;overflow-wrap:anywhere}
+
+  /* ---- Start screen ---- */
+  #start{position:fixed;inset:0;z-index:100;background:#000;display:flex;align-items:center;justify-content:center;
+         text-align:center;padding:20px;cursor:pointer;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+  #start span{font-size:min(11vw,84px);line-height:1.4;display:block}
+  #start.gone{display:none}
+
+  /* ---- Effects ---- */
+  #term.glitch{animation:glitch .14s steps(2) infinite;text-shadow:4px 0 #fff,-4px 0 #777}
+  @keyframes glitch{
+    0%{transform:translate(0,0) skewX(0)}
+    25%{transform:translate(-12px,3px) skewX(8deg)}
+    50%{transform:translate(10px,-4px) skewX(-7deg)}
+    75%{transform:translate(-6px,5px) skewX(4deg)}
+    100%{transform:translate(7px,-3px) skewX(0)}
+  }
+  #shot{display:block;margin:0 auto 22px;max-width:100%;max-height:52vh;
+        image-rendering:pixelated;image-rendering:crisp-edges;
+        border:4px solid #fff;box-shadow:8px 8px 0 #444;
+        filter:grayscale(1) contrast(1.35) brightness(.9)}
+  #shot.shake{animation:shake .09s linear infinite}
+  @keyframes shake{
+    0%{transform:translate(0,0)}25%{transform:translate(-4px,3px)}
+    50%{transform:translate(4px,-3px)}75%{transform:translate(-3px,-4px)}100%{transform:translate(3px,4px)}
+  }
+
+  #foot{position:fixed;left:0;right:0;bottom:10px;text-align:left;padding:0 clamp(18px,5vw,56px);
+        opacity:0;transition:opacity 1s ease;text-transform:none;pointer-events:none}
+  #foot.show{opacity:1}
+  #foot div{font-family:Consolas,"Courier New",monospace;font-size:11px;line-height:1.4;max-width:720px;color:#8a8a8a}
+
+  @media(max-width:700px){
+    body{font-size:14px}
+    .line.big{font-size:1.7em}
+    .line.huge{font-size:2.1em}
+    .row{grid-template-columns:1fr;row-gap:.35em;font-size:.95em}
+    .row .k{font-size:.8em}
+  }
+  @media(prefers-reduced-motion:reduce){
+    #term.glitch,#shot.shake{animation:none}
+  }
+</style>
+</head>
+<body>
+<div id="start" role="button" tabindex="0" aria-label="Click to continue"><span>CLICK TO<br>CONTINUE</span></div>
+<div id="term"></div>
+<div id="foot"></div>
+<noscript><p style="position:fixed;inset:0;z-index:200;background:#000;padding:40px">This demonstration requires JavaScript.</p></noscript>
+
+<script>
+(function(){
+  // ===================== CONFIG =====================
+  var CAMERA_PRANK = true;   // false = remove the camera jumpscare
+  var GEO_ENABLED  = true;   // false = skip IP / location lookup
+  var SLOW = 1;              // typing speed multiplier: bigger = slower
+  // Put this sound file in the SAME folder as index.html
+  var TYPE_SOUND = 'ui-sci-fi-loading-numbers-scan-shimmer-tail-08.wav';
+  // ==================================================
+
+  var term = document.getElementById('term');
+  var foot = document.getElementById('foot');
+  var RM = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var sleep = function(ms){ return new Promise(function(r){ setTimeout(r, ms); }); };
+
+  // ================= Helpers =================
+  function mq(q){ try { return !!(window.matchMedia && matchMedia(q).matches); } catch(e){ return false; } }
+  function hash(str){                       // small non-crypto hash (cyrb53)
+    var h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (var i = 0, ch; i < str.length; i++){
+      ch = str.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).toUpperCase();
+  }
+
+  var ua = navigator.userAgent || '';
+  var uad = navigator.userAgentData || null;
+
+  // Device type. Handles iPads that pretend to be Macs and phones in "desktop site" mode.
+  function detectDevice(){
+    var touch = navigator.maxTouchPoints || 0;
+    if (/iPad|Tablet|PlayBook|Silk/i.test(ua)) return 'Tablet';
+    if (/Macintosh/i.test(ua) && touch > 1) return 'Tablet (iPad)';
+    if (/Android/i.test(ua) && !/Mobile/i.test(ua)) return 'Tablet';
+    if (/Mobi|iPhone|iPod|Android/i.test(ua)) return 'Mobile';
+    if (uad && uad.mobile === true) return 'Mobile';
+    if (/Linux|X11/i.test(ua) && !/Android|CrOS/i.test(ua) && touch > 1 &&
+        Math.min(screen.width, screen.height) < 900) return 'Mobile (desktop-site mode)';
+    return 'Desktop';
+  }
+  // OS name. Chrome freezes the version in the user agent, so the real version only comes from client hints.
+  function detectOS(hi){
+    var plat = uad && uad.platform, pv = hi && hi.platformVersion, maj = pv ? parseInt(pv, 10) : NaN;
+    if (plat === 'Windows' && !isNaN(maj)) return maj >= 13 ? 'Windows 11' : 'Windows 10';
+    if (plat === 'Android' && !isNaN(maj)) return 'Android ' + maj;
+    if (plat === 'macOS' && pv) return 'macOS ' + pv.split('.').slice(0, 2).join('.');
+    var m;
+    if (/Windows NT 10/i.test(ua)) return 'Windows 10 or 11';
+    if (/Windows/i.test(ua)) return 'Windows';
+    if (/Android/i.test(ua)){
+      return /Firefox|SamsungBrowser/i.test(ua) && (m = ua.match(/Android\s([\d.]+)/i)) ? 'Android ' + m[1] : 'Android';
+    }
+    if ((m = ua.match(/OS (\d+[_\d]*) like Mac/i))) return 'iOS ' + m[1].replace(/_/g, '.');
+    if (/iPhone|iPad|iPod/i.test(ua)) return 'iOS';
+    if (/Macintosh/i.test(ua) && (navigator.maxTouchPoints || 0) > 1) return 'iPadOS';
+    if (/Mac OS X|Macintosh/i.test(ua)) return 'macOS';
+    if (/CrOS/i.test(ua)) return 'ChromeOS';
+    if (/Linux|X11/i.test(ua) && (navigator.maxTouchPoints || 0) > 1 && Math.min(screen.width, screen.height) < 900) return 'Android';
+    if (/Linux|X11/i.test(ua)) return 'Linux';
+    return null;
+  }
+  function detectBrowser(isBrave){
+    var m, n = null;
+    if (isBrave) n = 'Brave';
+    else if (/Edg(e|A|iOS)?\//i.test(ua)) n = 'Edge';
+    else if (/OPR\/|Opera/i.test(ua)) n = 'Opera';
+    else if (/SamsungBrowser/i.test(ua)) n = 'Samsung Internet';
+    else if (/Firefox\/|FxiOS/i.test(ua)) n = 'Firefox';
+    else if (/Chrome\/|CriOS/i.test(ua)) n = 'Chrome';
+    else if (/Safari\//i.test(ua)) n = 'Safari';
+    if (!n) return null;
+    if ((m = ua.match(/(?:Chrome|CriOS|Firefox|FxiOS|Version|Edg[A-Za-z]*|OPR|SamsungBrowser)\/([\d.]+)/i))) n += ' ' + m[1].split('.')[0];
+    return n;
+  }
+
+  // ================= IP + approximate location (public API, from the browser) =================
+  function fetchJSON(url, ms){
+    var ctl = ('AbortController' in window) ? new AbortController() : null;
+    var timer = setTimeout(function(){ if (ctl) ctl.abort(); }, ms);
+    return fetch(url, ctl ? {signal: ctl.signal} : {}).then(function(r){
+      clearTimeout(timer);
+      if (!r.ok) throw new Error('bad status');
+      return r.json();
+    });
+  }
+  var G = null, ipOnly = null;
+  var geoPromise = Promise.resolve();
+  if (GEO_ENABLED){
+    geoPromise = fetchJSON('https://ipwho.is/', 4500).then(function(g){
+      if (g && g.success !== false && g.ip){ G = g; return; }
+      throw new Error('geo failed');
+    }).catch(function(){
+      return fetchJSON('https://api.ipify.org?format=json', 3000).then(function(j){
+        if (j && j.ip) ipOnly = j.ip;
+      }).catch(function(){});
+    });
+  }
+
+  // ================= Browser-only probes =================
+  function gpuName(){
+    try {
+      var c = document.createElement('canvas');
+      var gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+      if (!gl) return null;
+      var ext = gl.getExtension('WEBGL_debug_renderer_info');
+      return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : null;   // null when the browser hides it
+    } catch(e){ return null; }
+  }
+
+  // Only facts the browser reports reliably are kept. Anything missing is left out, never guessed.
+  async function collect(){
+    var nav = navigator, hi = {}, battery = null, devs = null, isBrave = false;
+
+    try { if (uad && uad.getHighEntropyValues) hi = await uad.getHighEntropyValues(['platformVersion','model','architecture','bitness']); } catch(e){}
+    try { if (nav.getBattery) battery = await nav.getBattery(); } catch(e){}
+    try { if (nav.mediaDevices && nav.mediaDevices.enumerateDevices) devs = await nav.mediaDevices.enumerateDevices(); } catch(e){}
+    try { if (nav.brave && nav.brave.isBrave) isBrave = await nav.brave.isBrave(); } catch(e){}
+
+    var gpu = gpuName();
+    var now = new Date();
+    var ro = {}; try { ro = Intl.DateTimeFormat().resolvedOptions(); } catch(e){}
+    var tz = ro.timeZone || null;
+    var off = -now.getTimezoneOffset(), sign = off >= 0 ? '+' : '-', ao = Math.abs(off);
+    var utcOff = 'UTC' + sign + String(Math.floor(ao / 60)).padStart(2, '0') + ':' + String(ao % 60).padStart(2, '0');
+    var scr = window.screen || {};
+    var cnt = function(kind){ return devs ? devs.filter(function(d){ return d.kind === kind; }).length : 0; };
+    var gg = G || {}, conn = gg.connection || {};
+    var os = detectOS(hi), browser = detectBrowser(isBrave);
+    var ipText = G ? G.ip : ipOnly;
+    var cores = nav.hardwareConcurrency || null;
+    var langs = (nav.languages && nav.languages.length) ? nav.languages.join(', ') : nav.language;
+
+    var place = [gg.city, gg.region, gg.country].filter(Boolean).join(', ');
+    var arch = hi.architecture ? hi.architecture + (hi.bitness ? ' ' + hi.bitness + '-bit' : '') : null;
+    var fp = [ua, langs, scr.width, scr.height, tz, cores, gpu, nav.maxTouchPoints].join('|');
+
+    var S = [
+      {title:'YOUR NETWORK', rows:[
+        ['IP ADDRESS', ipText],
+        ['IP TYPE',    ipText ? (ipText.indexOf(':') > -1 ? 'IPv6' : 'IPv4') : null],
+        ['ISP',        conn.isp || conn.org],
+        ['ASN',        conn.asn ? 'AS' + conn.asn : null]
+      ]},
+      {title:'WHERE YOU ARE', rows:[
+        ['IP LOCATION', place],
+        ['NOTE',        place ? 'Taken from your IP address, so it is approximate and shows your VPN if you use one.' : null]
+      ]},
+      {title:'YOUR DEVICE', rows:[
+        ['TYPE',      detectDevice()],
+        ['OS',        os],
+        ['MODEL',     hi.model],
+        ['CPU ARCH',  arch],
+        ['CPU CORES', cores],
+        ['TOUCH',     (nav.maxTouchPoints || 0) > 0 ? nav.maxTouchPoints + ' touch point(s)' : 'No touchscreen'],
+        ['GPU',       gpu],
+        ['BATTERY',   battery ? Math.round(battery.level * 100) + '%' : null],
+        ['CHARGING',  battery ? (battery.charging ? 'Yes' : 'No') : null],
+        ['CAMERAS',   cnt('videoinput') || null],
+        ['MICS',      cnt('audioinput') || null]
+      ]},
+      {title:'YOUR SCREEN', rows:[
+        ['SCREEN',    scr.width ? scr.width + ' x ' + scr.height : null],
+        ['DARK MODE', mq('(prefers-color-scheme: dark)') ? 'On' : 'Off'],
+        ['INPUT',     mq('(pointer: coarse)') ? 'Finger / touch' : 'Mouse / trackpad']
+      ]},
+      {title:'YOUR BROWSER', rows:[
+        ['BROWSER',   browser],
+        ['LANGUAGES', langs]
+      ]},
+      {title:'YOUR VISIT', rows:[
+        ['LOCAL TIME', now.toLocaleString()],
+        ['TIMEZONE',   tz],
+        ['UTC OFFSET', utcOff],
+        ['LOCALE',     ro.locale],
+        ['CAME FROM',  document.referrer || 'Typed link or direct visit']
+      ]},
+      {title:'YOUR FINGERPRINT', rows:[
+        ['FINGERPRINT', hash(fp)],
+        ['USER AGENT',  ua]
+      ]}
+    ];
+
+    // drop empty values, then drop empty sections
+    S.forEach(function(sec){
+      sec.rows = sec.rows.filter(function(r){ return r[1] !== null && r[1] !== undefined && r[1] !== ''; })
+                         .map(function(r){ return [r[0], String(r[1])]; });
+    });
+    return S.filter(function(sec){ return sec.rows.length; });
+  }
+
+  // ================= Sound =================
+  var AC = null, tsnd = null;
+  function initAudio(){
+    try {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      if (AC.state === 'suspended') AC.resume();
+    } catch(e){ AC = null; }
+    try {
+      tsnd = new Audio(TYPE_SOUND);
+      tsnd.loop = true; tsnd.volume = .6; tsnd.preload = 'auto';
+      // unlock for mobile: must start inside the tap, then pause right away
+      var p = tsnd.play();
+      if (p && p.then) p.then(function(){ tsnd.pause(); tsnd.currentTime = 0; }).catch(function(){});
+    } catch(e){ tsnd = null; }
+  }
+  function typeOn(){
+    if (!tsnd) return;
+    try { if (tsnd.paused){ tsnd.currentTime = 0; var p = tsnd.play(); if (p && p.catch) p.catch(function(){}); } } catch(e){}
+  }
+  function typeOff(){ if (tsnd) { try { tsnd.pause(); } catch(e){} } }
+
+  function tone(f0, f1, dur, type, vol){
+    if (!AC) return;
+    try {
+      var o = AC.createOscillator(), g = AC.createGain(), t = AC.currentTime;
+      o.type = type || 'square';
+      o.frequency.setValueAtTime(f0, t);
+      if (f1) o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
+      g.gain.setValueAtTime(vol || .12, t);
+      g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+      o.connect(g); g.connect(AC.destination);
+      o.start(t); o.stop(t + dur + .02);
+    } catch(e){}
+  }
+  function noise(dur, vol){
+    if (!AC) return;
+    try {
+      var len = Math.floor(AC.sampleRate * dur), buf = AC.createBuffer(1, len, AC.sampleRate), d = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      var s = AC.createBufferSource(), g = AC.createGain();
+      s.buffer = buf; g.gain.value = vol || .2;
+      s.connect(g); g.connect(AC.destination); s.start();
+    } catch(e){}
+  }
+  function scareSound(){
+    noise(.7, .35);
+    tone(900, 90, .6, 'sawtooth', .18);
+    tone(70, 45, .8, 'square', .22);
+  }
+
+  // ================= Typing helpers =================
+  var cursor = document.createElement('span'); cursor.className = 'cursor';
+
+  async function typeInto(el, text, speed){
+    el.appendChild(cursor);
+    var node = document.createTextNode('');
+    el.insertBefore(node, cursor);
+    for (var i = 0; i < text.length; i++){
+      node.nodeValue += text.charAt(i);
+      await sleep((speed + Math.random() * speed * .5) * SLOW);
+    }
+  }
+
+  async function typeLine(item){
+    var el = document.createElement('div');
+    el.className = 'line' + (item.b ? ' big' : '') + (item.huge ? ' huge' : '');
+    term.appendChild(el);
+    typeOn();
+    await typeInto(el, item.t, item.speed || 42);
+    typeOff();
+  }
+
+  async function typeRow(parent, label, value){
+    var row = document.createElement('div'); row.className = 'row';
+    var k = document.createElement('span'); k.className = 'k';
+    var v = document.createElement('span'); v.className = 'v';
+    row.appendChild(k); row.appendChild(v); parent.appendChild(row);
+    typeOn();
+    await typeInto(k, label, 28);
+    await typeInto(v, value, value.length > 45 ? 10 : 30);   // long values (like the user agent) type faster
+    typeOff();
+    try { row.scrollIntoView({block:'end'}); } catch(e){}
+    await sleep(220 * SLOW);
+  }
+
+  async function clearScreen(){
+    term.classList.add('fade');
+    await sleep(400);
+    term.innerHTML = '';
+    window.scrollTo(0, 0);
+    term.classList.remove('fade');
+    await sleep(300);
+  }
+
+  // Short white flashes (about 2 per second at most)
+  async function pulses(n, gap){
+    if (RM) { await sleep(gap); return; }
+    for (var i = 0; i < n; i++){
+      document.body.classList.add('pulse'); await sleep(100);
+      document.body.classList.remove('pulse'); await sleep(gap);
+    }
+  }
+
+  // ================= Camera jumpscare =================
+  // The browser shows its own permission prompt; if denied, nothing is captured.
+  // The photo is shown only on this screen, never uploaded or saved, and the
+  // camera is switched off right after one frame is taken.
+  function requestCamera(){
+    var timedOut = false;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return Promise.resolve(null);
+    var req = navigator.mediaDevices.getUserMedia({video:{facingMode:'user'}, audio:false}).then(function(s){
+      if (timedOut){ s.getTracks().forEach(function(t){ t.stop(); }); return null; }
+      return s;
+    }).catch(function(){ return null; });
+    var to = new Promise(function(r){ setTimeout(function(){ timedOut = true; r(null); }, 30000); });
+    return Promise.race([req, to]);
+  }
+
+  async function cameraStage(){
+    // quick glitch
+    term.classList.add('glitch');
+    noise(.35, .2);
+    await pulses(1, 250);
+    await sleep(250);
+    term.classList.remove('glitch');
+    term.innerHTML = '';
+
+    var camReq = requestCamera();          // browser permission prompt appears now
+    await typeLine({t:'SMILE.', b:1});
+
+    var stream = await camReq, src = null;
+    try {
+      if (stream){
+        var v = document.createElement('video');
+        v.setAttribute('playsinline', ''); v.muted = true; v.srcObject = stream;
+        await v.play();
+        await sleep(900); // let the camera adjust exposure
+        var vw = v.videoWidth || 640, vh = v.videoHeight || 480;
+        var sc = Math.min(1, 640 / vw);
+        src = document.createElement('canvas');
+        src.width = Math.round(vw * sc); src.height = Math.round(vh * sc);
+        var cx = src.getContext('2d');
+        cx.translate(src.width, 0); cx.scale(-1, 1); // mirror like a selfie
+        cx.drawImage(v, 0, 0, src.width, src.height);
+      }
+    } catch(e){
+      src = null;
+    } finally {
+      if (stream) stream.getTracks().forEach(function(t){ t.stop(); }); // camera off
+    }
+
+    term.innerHTML = '';
+
+    if (src){
+      term.classList.add('center');
+      var view = document.createElement('canvas');
+      view.id = 'shot'; view.width = src.width; view.height = src.height;
+      var vctx = view.getContext('2d');
+      var tmp = document.createElement('canvas');
+      var render = function(cols){
+        tmp.width = cols; tmp.height = Math.max(1, Math.round(cols * src.height / src.width));
+        tmp.getContext('2d').drawImage(src, 0, 0, tmp.width, tmp.height);
+        vctx.imageSmoothingEnabled = false;
+        vctx.clearRect(0, 0, view.width, view.height);
+        vctx.drawImage(tmp, 0, 0, view.width, view.height);
+      };
+      render(14);
+      term.appendChild(view);
+      if (!RM) view.classList.add('shake');
+
+      scareSound();
+      if (navigator.vibrate) { try { navigator.vibrate([250, 100, 250]); } catch(e){} }
+      await pulses(2, 420);
+      await typeLine({t:'I CAN SEE YOU.', huge:1, speed:90});
+
+      var steps = [24, 40, 70, 120, 220, src.width];
+      for (var i = 0; i < steps.length; i++){
+        render(steps[i]);
+        await sleep(300);
+      }
+      view.classList.remove('shake');
+      await sleep(2600);
+
+      // wipe the image data
+      src.width = 0; src.height = 0; view.width = 0; view.height = 0; tmp.width = 0; tmp.height = 0;
+      term.classList.remove('center');
+    } else {
+      await typeLine({t:'CAMERA BLOCKED. GOOD.', b:1});
+      await sleep(1000);
+    }
+    await clearScreen();
+  }
+
+  function showFooter(){
+    foot.innerHTML = '<div>Privacy notice: everything shown here was read by your own browser and is displayed only on your screen. Nothing is stored or sent to the page owner. Your IP and approximate location are looked up from a public service (ipwho.is). If you allow the camera, the photo is never uploaded or saved.</div>';
+    requestAnimationFrame(function(){ foot.classList.add('show'); });
+  }
+
+  // ================= Main sequence =================
+  async function run(){
+    await sleep(900);
+    await typeLine({t:'HELLO, VISITOR.', b:1, speed:70});
+    await sleep(1400);
+    await typeLine({t:'I MAY NOT KNOW YOUR NAME,', speed:55});
+    await sleep(900);
+    await typeLine({t:'BUT I KNOW SOMETHING YOU DON\'T KNOW.', speed:55});
+    await sleep(2200);
+    await clearScreen();
+
+    await typeLine({t:'LET ME SHOW YOU...', b:1, speed:60});
+    var collected = collect();              // starts gathering everything the browser exposes
+    await geoPromise;                       // IP lookup (has its own timeout)
+    var sections = await collected;
+    await sleep(1200);
+    await clearScreen();
+
+    // ---- every section, left aligned, one screen each ----
+    for (var i = 0; i < sections.length; i++){
+      var sec = sections[i];
+      await typeLine({t:sec.title, b:1, speed:50});
+      var rows = document.createElement('div'); rows.className = 'rows';
+      term.appendChild(rows);
+      for (var j = 0; j < sec.rows.length; j++){
+        await typeRow(rows, sec.rows[j][0], sec.rows[j][1]);
+      }
+      await sleep(2600);
+      await clearScreen();
+    }
+
+    await typeLine({t:'ALL OF THIS WAS FREE.', b:1, speed:60});
+    await typeLine({t:'YOU ONLY VISITED A PAGE.', b:1, speed:60});
+    await sleep(2400);
+    await clearScreen();
+
+    // ---- camera stage: only after all the data has been shown ----
+    if (CAMERA_PRANK) await cameraStage();
+
+    // ---- reveal ----
+    await typeLine({t:'RELAX.', b:1, speed:60});
+    await sleep(600);
+    await typeLine({t:'YOU HAVE NOT BEEN HACKED.', b:1, speed:60});
+    await sleep(1800);
+    await clearScreen();
+
+    await typeLine({t:'THIS WAS A CYBERSECURITY AWARENESS DEMO.', speed:45});
+    await sleep(500);
+    await typeLine({t:'WEBSITES CANNOT SEE YOUR PASSWORDS, MESSAGES, FILES OR HOME ADDRESS.', speed:45});
+    await sleep(500);
+    await typeLine({t:'THINK BEFORE YOU CLICK. CHECK THE ADDRESS. PROTECT YOUR DATA.', speed:45});
+    await sleep(1000);
+    await typeLine({t:'YOUR PRIVACY MATTERS.', b:1, speed:60});
+    showFooter();
+  }
+
+  // ================= Click to continue (works with mouse, touch, keyboard) =================
+  var started = false;
+  var startEl = document.getElementById('start');
+  function begin(e){
+    if (started) return;
+    started = true;
+    if (e && e.preventDefault) e.preventDefault();
+    initAudio();                 // must happen inside the tap so mobile allows sound
+    startEl.classList.add('gone');
+    run();
+  }
+  startEl.addEventListener('click', begin);
+  startEl.addEventListener('touchend', begin, {passive:false});
+  startEl.addEventListener('keydown', function(e){ if (e.key === 'Enter' || e.key === ' ') begin(e); });
+})();
+</script>
+</body>
+</html>
